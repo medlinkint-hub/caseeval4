@@ -482,7 +482,7 @@ function toast(m,dur) {
 // ══════════════════════════════════════════════
 // SETTINGS
 // ══════════════════════════════════════════════
-const MODELS = ['claude-sonnet-4-6','claude-opus-4-6','claude-haiku-4-5-20251001'];
+const MODELS = ['claude-sonnet-4-6','claude-opus-4-7','claude-opus-4-6','claude-haiku-4-5-20251001'];
 
 function getKey() { return (localStorage.getItem('mp_key')||'').trim(); }
 function getMod() {
@@ -688,7 +688,7 @@ async function apiCall(messages, systemPrompt, maxTokens) {
   }
   const mod = getMod();
   const body = { model: mod, max_tokens: maxTokens||1500, messages: messages, temperature: 0 };
-  if(systemPrompt) body.system = systemPrompt;
+  if(systemPrompt) body.system = [{type:'text', text:systemPrompt, cache_control:{type:'ephemeral'}}];
 
   // Check if any message contains a PDF document block — need beta header
   var hasPDF = messages.some(function(m){
@@ -710,12 +710,13 @@ async function apiCall(messages, systemPrompt, maxTokens) {
         method: 'POST',
         mode: 'cors',
         credentials: 'omit',
-        headers: Object.assign({
+        headers: {
           'Content-Type': 'application/json',
           'x-api-key': key,
           'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true'
-        }, hasPDF ? {'anthropic-beta': 'pdfs-2024-09-25'} : {}),
+          'anthropic-dangerous-direct-browser-access': 'true',
+          'anthropic-beta': hasPDF ? 'prompt-caching-2024-07-31,pdfs-2024-09-25' : 'prompt-caching-2024-07-31'
+        },
         body: JSON.stringify(body)
       });
 
@@ -759,7 +760,7 @@ async function apiCallStream(messages, systemPrompt, maxTokens, onChunk) {
   if(typeof ReadableStream !== 'undefined' && typeof TextDecoder !== 'undefined') {
     try {
       const body = { model: mod, max_tokens: maxTokens||1500, messages: messages, stream: true, temperature: 0 };
-      if(systemPrompt) body.system = systemPrompt;
+      if(systemPrompt) body.system = [{type:'text', text:systemPrompt, cache_control:{type:'ephemeral'}}];
 
       // Check if any message contains a PDF document block — need beta header
       var hasPDFStream = messages.some(function(m){
@@ -774,44 +775,49 @@ async function apiCallStream(messages, systemPrompt, maxTokens, onChunk) {
         mode: 'cors',
         credentials: 'omit',
         signal: evalAbortCtrl.signal,
-        headers: Object.assign({
+        headers: {
           'Content-Type': 'application/json',
           'x-api-key': key,
           'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true'
-        }, hasPDFStream ? {'anthropic-beta': 'pdfs-2024-09-25'} : {}),
+          'anthropic-dangerous-direct-browser-access': 'true',
+          'anthropic-beta': hasPDFStream ? 'prompt-caching-2024-07-31,pdfs-2024-09-25' : 'prompt-caching-2024-07-31'
+        },
         body: JSON.stringify(body)
       });
-      clearTimeout(evalTimeout);
 
       if(!res.ok) {
+        clearTimeout(evalTimeout);
         const err = await res.json().catch(()=>({}));
         throw new Error((err.error&&err.error.message)||'HTTP '+res.status);
       }
 
-      if(!res.body) throw new Error('Streaming not supported');
+      if(!res.body) { clearTimeout(evalTimeout); throw new Error('Streaming not supported'); }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let fullText = '';
 
-      while(true) {
-        const {done, value} = await reader.read();
-        if(done) break;
-        const chunk = decoder.decode(value, {stream:true});
-        const lines = chunk.split('\n');
-        for(const line of lines) {
-          if(!line.startsWith('data: ')) continue;
-          const data = line.slice(6).trim();
-          if(data === '[DONE]') continue;
-          try {
-            const parsed = JSON.parse(data);
-            if(parsed.type === 'content_block_delta' && parsed.delta && parsed.delta.text) {
-              fullText += parsed.delta.text;
-              if(onChunk) onChunk(parsed.delta.text, fullText);
-            }
-          } catch(e) {}
+      try {
+        while(true) {
+          const {done, value} = await reader.read();
+          if(done) break;
+          const chunk = decoder.decode(value, {stream:true});
+          const lines = chunk.split('\n');
+          for(const line of lines) {
+            if(!line.startsWith('data: ')) continue;
+            const data = line.slice(6).trim();
+            if(data === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(data);
+              if(parsed.type === 'content_block_delta' && parsed.delta && parsed.delta.text) {
+                fullText += parsed.delta.text;
+                if(onChunk) onChunk(parsed.delta.text, fullText);
+              }
+            } catch(e) {}
+          }
         }
+      } finally {
+        clearTimeout(evalTimeout);
       }
       return fullText;
     } catch(streamErr) {
@@ -826,7 +832,7 @@ async function apiCallStream(messages, systemPrompt, maxTokens, onChunk) {
   // Non-streaming fallback
   console.log('[Stream] Using non-streaming fetch');
   const body2 = { model: mod, max_tokens: maxTokens||1500, messages: messages, temperature: 0 };
-  if(systemPrompt) body2.system = systemPrompt;
+  if(systemPrompt) body2.system = [{type:'text', text:systemPrompt, cache_control:{type:'ephemeral'}}];
   const res2 = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     mode: 'cors',
@@ -835,7 +841,8 @@ async function apiCallStream(messages, systemPrompt, maxTokens, onChunk) {
       'Content-Type': 'application/json',
       'x-api-key': key,
       'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
+      'anthropic-dangerous-direct-browser-access': 'true',
+      'anthropic-beta': 'prompt-caching-2024-07-31'
     },
     body: JSON.stringify(body2)
   });
@@ -5540,7 +5547,8 @@ function renderSet() {
   html+='<div class="fg"><label>Your Name</label><input id="s_n" value="'+esc(s.name)+'" placeholder="Your name"></div>';
   html+='<div class="fg"><label>Claude Model</label><select id="s_m">';
   html+='<option value="claude-sonnet-4-6"'+(s.mod==='claude-sonnet-4-6'?' selected':'')+'>Claude Sonnet 4.6 &mdash; Recommended</option>';
-  html+='<option value="claude-opus-4-6"'+(s.mod==='claude-opus-4-6'?' selected':'')+'>Claude Opus 4.6 &mdash; Most Powerful</option>';
+  html+='<option value="claude-opus-4-7"'+(s.mod==='claude-opus-4-7'?' selected':'')+'>Claude Opus 4.7 &mdash; Most Powerful</option>';
+  html+='<option value="claude-opus-4-6"'+(s.mod==='claude-opus-4-6'?' selected':'')+'>Claude Opus 4.6</option>';
   html+='<option value="claude-haiku-4-5-20251001"'+(s.mod==='claude-haiku-4-5-20251001'?' selected':'')+'>Claude Haiku 4.5 &mdash; Fastest</option>';
   html+='</select></div></div>';
   html+='<div class="fg" style="margin-bottom:14px"><label>Anthropic API Key</label>';

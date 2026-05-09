@@ -1,0 +1,2 @@
+viberbot>=1.0.12
+flask>=2.3

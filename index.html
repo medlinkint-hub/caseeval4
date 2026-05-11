@@ -2715,12 +2715,14 @@ html += '</div>';
   setTimeout(()=>{
     const sc = G('csc');
     if(sc && window.Chart) {
+      Chart.getChart(sc)?.destroy();
       new Chart(sc,{type:'doughnut',data:{labels:['New','Reviewing','Pending','Approved','Declined','Closed'],datasets:[{data:['new','reviewing','pending','approved','declined','closed'].map(s=>CASES.filter(c=>c.status===s).length),backgroundColor:['#1a2a72','#7c3aed','#f59e0b','#10b981','#e8231a','#8090b0'],borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{color:'#8090b0',font:{size:11},padding:8}}}}});
     }
     const mc = G('cmc');
     if(mc && window.Chart) {
       const months=[],counts=[];
       for(let i=5;i>=0;i--){const d=new Date();d.setMonth(d.getMonth()-i);months.push(d.toLocaleString('en',{month:'short'}));const y=d.getFullYear(),m=d.getMonth();counts.push(CASES.filter(c=>{const cd=new Date(c.created);return cd.getFullYear()===y&&cd.getMonth()===m}).length);}
+      Chart.getChart(mc)?.destroy();
       new Chart(mc,{type:'bar',data:{labels:months,datasets:[{data:counts,backgroundColor:'rgba(26,42,114,.6)',borderRadius:4,hoverBackgroundColor:'#1a2a72'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:'#8090b0'}},y:{grid:{color:'rgba(220,227,236,.8)'},ticks:{color:'#8090b0',stepSize:1}}}}});
     }
   },100);
